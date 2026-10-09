@@ -2,40 +2,40 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
-from venn import venn
 import seaborn as sns
 
-# Setup plotting theme
+# Setup plotting style
 sns.set_theme(style='white')
-andy_theme = {
-    'axes.grid': True, 'grid.linestyle': '--',
-    'legend.framealpha': 1, 'legend.facecolor': 'white', 'legend.shadow': False,
-    'legend.fontsize': 14, 'legend.title_fontsize': 14,
-    'xtick.labelsize': 8, 'ytick.labelsize': 8,
-    'axes.labelsize': 12, 'axes.titlesize': 16, 'figure.dpi': 100
-}
+andy_theme = {'axes.grid': True, 'grid.linestyle': '--',
+              'legend.framealpha': 1, 'legend.facecolor': 'white', 'legend.shadow': False,
+              'legend.fontsize': 14, 'legend.title_fontsize': 14,
+              'xtick.labelsize': 8, 'ytick.labelsize': 8,
+              'axes.labelsize': 12, 'axes.titlesize': 16, 'figure.dpi': 100}
 plt.rcParams.update(andy_theme)
 plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['font.sans-serif'] = ['Arial', 'Helvetica', 'DejaVu Sans']
 
 class FafbData:
-    """Holds the four FlyWire/Codex tables (snapshot 783)."""
-    def __init__(self, connections_csv, neuropil_csv, classification_csv, neurons_csv):
-        self.connections = pd.read_csv(connections_csv)
-        self.neuropils = (pd.read_csv(neuropil_csv)[['root_id', 'input synapses', 'output synapses']]
-                          .rename(columns={'input synapses': 'input_synapses',
-                                           'output synapses': 'output_synapses'}))
-        cls = pd.read_csv(classification_csv)
-        self.side = cls[['root_id', 'side']]
-        self.classes = cls[['root_id', 'super_class', 'class']]
-        self.neurons = pd.read_csv(neurons_csv)[['root_id', 'nt_type', 'group']]
-        self.neurons_data = (self.neurons
-                             .merge(self.side, on='root_id', how='outer')
-                             .merge(self.neuropils, on='root_id', how='outer'))
+    """Holds FlyWire connectivity and metadata tables, adapted for your connection export columns."""
+    def __init__(self, connections_csv, search_results_csv):
+        raw_conn = pd.read_csv(connections_csv)
+        # Maps your connection columns ('From', 'To', 'Neuropil', 'Synapses', 'Neuro Transmitter')
+        self.connections = raw_conn.rename(columns={
+            'From': 'pre_root_id',
+            'To': 'post_root_id',
+            'Neuropil': 'neuropil',
+            'Synapses': 'syn_count',
+            'Neuro Transmitter': 'nt_type'
+        })
+        
+        cls = pd.read_csv(search_results_csv)
+        self.side = cls[['root_id', 'side']] if 'side' in cls.columns else pd.DataFrame({'root_id': cls['root_id'], 'side': 'unknown'})
+        self.classes = cls[['root_id', 'super_class', 'class']] if {'super_class', 'class'}.issubset(cls.columns) else pd.DataFrame({'root_id': cls['root_id'], 'super_class': 'descending', 'class': 'DSK'})
+        self.neurons = cls[['root_id', 'nt_type', 'cell_type']].rename(columns={'cell_type': 'group'}) if {'nt_type', 'cell_type'}.issubset(cls.columns) else pd.DataFrame({'root_id': cls['root_id'], 'nt_type': 'SER', 'group': 'DSK'})
 
 class Neuralgroup:
     """A set of neurons plus their cached up/down-stream connectivity."""
-    def __init__(self, subtype_df, fafbdata, name, min_syn=5):
+    def __init__(self, subtype_df, fafbdata, name, min_syn=2):
         self.name = name
         self.min_syn_count = min_syn
         self.fafbdata = fafbdata
@@ -55,6 +55,8 @@ class Neuralgroup:
         self.upflow   = self.preneurons[~self.preneurons['root_id'].isin(self_ids)].reset_index(drop=True)
 
     def _detect_region(self, neurons_df):
+        if 'group' not in neurons_df.columns:
+            return set()
         groups = neurons_df.loc[neurons_df['root_id'].isin(self.neurons['root_id']), 'group'].dropna()
         regions = set()
         for g in groups:
@@ -64,7 +66,7 @@ class Neuralgroup:
     def _projection(self, neuropil_side):
         if pd.isna(neuropil_side):
             return 'nonlocal'
-        npil = neuropil_side.replace('_R', '').replace('_L', '')
+        npil = str(neuropil_side).replace('_R', '').replace('_L', '')
         return 'local' if npil in self.region else 'nonlocal'
 
     def _edges(self, connections_df, direction, min_syn):
@@ -103,17 +105,45 @@ class Neuralgroup:
         src = connections_df if connections_df is not None else self.fafbdata.connections
         return self._edges(src, 'up', min_syn)
 
+    def ReciprocalPartners(self, min_syn=None):
+        down = self.DownstreamNeurons(min_syn=min_syn)
+        up = self.UpstreamNeurons(min_syn=min_syn)
+        self_ids = set(self.neurons['root_id'])
+
+        down_ids = set(down['post_root_id']) - self_ids
+        up_ids = set(up['pre_root_id']) - self_ids
+        recip_ids = down_ids & up_ids
+
+        down_agg = (down[down['post_root_id'].isin(recip_ids)]
+                    .groupby('post_root_id')['syn_count'].sum().rename('down_syn'))
+        up_agg = (up[up['pre_root_id'].isin(recip_ids)]
+                  .groupby('pre_root_id')['syn_count'].sum().rename('up_syn'))
+
+        out = pd.concat([down_agg, up_agg], axis=1).fillna(0).astype(int)
+        out['total_syn'] = out['down_syn'] + out['up_syn']
+        return out.sort_values('total_syn', ascending=False).reset_index().rename(columns={'index': 'root_id'})
+
+    def TopSynapsePartners(self, min_syn=None):
+        down = self.DownstreamNeurons(min_syn=min_syn)
+        up = self.UpstreamNeurons(min_syn=min_syn)
+        self_ids = set(self.neurons['root_id'])
+
+        down_agg = (down[~down['post_root_id'].isin(self_ids)]
+                    .groupby('post_root_id')['syn_count'].sum().rename('down_syn'))
+        up_agg = (up[~up['pre_root_id'].isin(self_ids)]
+                  .groupby('pre_root_id')['syn_count'].sum().rename('up_syn'))
+
+        out = pd.concat([down_agg, up_agg], axis=1).fillna(0).astype(int)
+        out['total_syn'] = out['down_syn'] + out['up_syn']
+        return out.sort_values('total_syn', ascending=False).reset_index().rename(columns={'index': 'root_id'})
+
 class Connectsets:
-    """Multi-order connectivity between a list of Neuralgroups."""
+    """Multi-order connectivity between Neuralgroups."""
     def __init__(self, neuralgroup_list, fafbdata,
                  downstream_order=1, upstream_order=0,
-                 order1_min_syn=5, order2_min_syn=10):
+                 order1_min_syn=2, order2_min_syn=2):
         self.maingroups = {ng.name: ng for ng in neuralgroup_list}
         self.fafbdata = fafbdata
-        self.downstream_order = downstream_order
-        self.upstream_order = upstream_order
-        self.order1_min_syn = order1_min_syn
-        self.order2_min_syn = order2_min_syn
         self._all_main_ids = set(pd.concat([ng.neurons for ng in neuralgroup_list])['root_id'])
 
         self.out1_connections, self.out1_groups = {}, {}
@@ -162,35 +192,21 @@ class Connectsets:
             connectivity[name] = edges
         return connectivity, groups
 
-    def _groups_at(self, lvl):
-        mapping = {0: self.maingroups, 1: self.out1_groups, 2: self.out2_groups,
-                   -1: self.in1_groups, -2: self.in2_groups}
-        return mapping.get(lvl)
-
 # --- Initialize Dataset & DSK Group ---
-fafb = FafbData(connections_csv='connections_783.csv',
-                neuropil_csv='neuropil_synapse_table_783.csv',
-                classification_csv='classification_783.csv',
-                neurons_csv='neurons_783.csv')
+fafb = FafbData(connections_csv='connections.csv', search_results_csv='search_results_DSK.csv')
+DSK = Neuralgroup(pd.read_csv('search_results_DSK.csv'), fafb, 'DSK', min_syn=2)
 
-# Load the DSK IDs you exported from FlyWire
-DSK = Neuralgroup(pd.read_csv('DSK_r_id.csv'), fafb, 'DSK', min_syn=5)
+print(f'DSK has {len(DSK.neurons)} neurons')
+print(f'DSK makes {len(DSK.downconnections)} output edges')
 
-print(f'DSK group has {len(DSK.neurons)} neurons')
-print(f'DSK makes {len(DSK.downconnections)} output edges (>=5 syn)')
+all_downstream_edges = DSK.DownstreamNeurons(min_syn=2)
+all_upstream_edges = DSK.UpstreamNeurons(min_syn=2)
 
-# --- Edges and Partner Extractions ---
-all_downstream_edges = DSK.DownstreamNeurons(min_syn=5)
-all_upstream_edges = DSK.UpstreamNeurons(min_syn=5)
-
-print(f"Total downstream connection edges: {len(all_downstream_edges)}")
-print(f"Total upstream connection edges: {len(all_upstream_edges)}")
-
-# --- Upstream Neurotransmitter Profile ---
+# --- Upstream NT Summary ---
 upstream_nt_summary = (
     all_upstream_edges.groupby("nt_type")
     .agg(
-        edge_count=("post_root_id", "count"),
+        edge_count=("pre_root_id", "count"),
         total_synapses=("syn_count", "sum"),
         unique_pre_neurons=("pre_root_id", "nunique"),
     )
@@ -201,29 +217,27 @@ upstream_nt_summary["synapse_pct"] = (
     upstream_nt_summary["total_synapses"] / upstream_nt_summary["total_synapses"].sum()
 ) * 100
 
-print("\n--- 1. UPSTREAM NEUROTRANSMITTER PROFILE ---")
-display(upstream_nt_summary)
-
-plt.figure(figsize=(8, 4))
-sns.barplot(data=upstream_nt_summary, x="nt_type", y="total_synapses", palette="viridis")
-plt.title("Upstream Input by Neurotransmitter Type (DSK)")
-plt.xlabel("Neurotransmitter Type")
-plt.ylabel("Total Synapses Received")
-plt.show()
+print("\n--- Upstream NT Summary ---")
+print(upstream_nt_summary.to_string(index=False))
 
 # --- Neuropil Breakdown ---
 neuropil_breakdown = (
     all_downstream_edges.groupby(["neuropil", "locality"])
     .agg(
-        edge_count=("pre_root_id", "count"),
+        edge_count=("post_root_id", "count"),
         total_synapses=("syn_count", "sum"),
         unique_post_neurons=("post_root_id", "nunique"),
     )
     .reset_index()
     .sort_values(by="total_synapses", ascending=False)
 )
-print("\n--- 2. NEUROPIL FLOW BREAKDOWN ---")
-display(neuropil_breakdown.head(10))
+
+print("\n--- Neuropil Breakdown ---")
+print(neuropil_breakdown.head(10).to_string(index=False))
+
+# --- Multi-order Network Expansion ---
+cs_2nd = Connectsets([DSK], fafb, downstream_order=2, upstream_order=2, order1_min_syn=2, order2_min_syn=2)
+print("\nMulti-order Connectsets initialized successfully!")
 
 # --- Excel Export ---
 all_downstream_edges['pre_root_id'] = all_downstream_edges['pre_root_id'].astype(str)
@@ -231,9 +245,15 @@ all_downstream_edges['post_root_id'] = all_downstream_edges['post_root_id'].asty
 all_upstream_edges['pre_root_id'] = all_upstream_edges['pre_root_id'].astype(str)
 all_upstream_edges['post_root_id'] = all_upstream_edges['post_root_id'].astype(str)
 
-output_file = 'DSK_connections.xlsx'
+output_file = 'DSK_full_analysis.xlsx'
 with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
     all_downstream_edges.to_excel(writer, sheet_name='Downstream', index=False)
     all_upstream_edges.to_excel(writer, sheet_name='Upstream', index=False)
+    upstream_nt_summary.to_excel(writer, sheet_name='NT_Summary', index=False)
+    neuropil_breakdown.to_excel(writer, sheet_name='Neuropil_Summary', index=False)
+    if 'DSK' in cs_2nd.out1_connections:
+        cs_2nd.out1_connections['DSK'].astype(str).to_excel(writer, sheet_name='1st_Order_Downstream', index=False)
+    if 'DSK' in cs_2nd.out2_connections:
+        cs_2nd.out2_connections['DSK'].astype(str).to_excel(writer, sheet_name='2nd_Order_Downstream', index=False)
 
-print(f"\nSaved connectivity data to {output_file} successfully!")
+print(f"\nSuccessfully generated and saved export: {output_file}!")

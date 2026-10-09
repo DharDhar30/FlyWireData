@@ -1,0 +1,9 @@
+root_id,label,name,nt_type,flow,super_class,class,sub_class,cell_type,hemilineage,nerve,connectivity_tag,side,input_synapses,output_synapses
+720575940635640312,['sulfakinin producing neuron MP1b'; 'DSK-MP1B neuron'; 'DNp'],SLP.GNG.3,SER,efferent,descending,,,['DNp62'; 'DSKMP1B'],putative_primary,CV,['rich_club'; 'reciprocal'; 'feedforward_loop_participant'; '3_cycle_participant'],left,867,411
+720575940620156283,['sulfakinin producing neuron MP1a'; 'DSK-MP1A neuron'; 'DNp'],AVLP.2829,SER,efferent,descending,,,['DNp30'; 'DSKMP1A'],putative_primary,CV,['rich_club'; 'reciprocal'; 'feedforward_loop_participant'; '3_cycle_participant'],left,980,537
+720575940633228103,['sulfakinin producing neuron MP1b'; 'DSK-MP1a neuron'; 'DNp'],AVLP.1554,SER,efferent,descending,,,['DNp30'; 'DSKMP1A'],putative_primary,CV,['rich_club'; 'reciprocal'; 'feedforward_loop_participant'; '3_cycle_participant'],right,882,543
+720575940617904208,['sulfakinin producing neuron MP1b'; 'DSK-MP1B neuron'; 'DNp'],SLP.GNG.1,SER,efferent,descending,,,['DNp62'; 'DSKMP1B'],putative_primary,CV,['rich_club'; 'reciprocal'; 'feedforward_loop_participant'; '3_cycle_participant'],right,1099,481
+720575940607000450,[],SLP.SMP.118,,intrinsic,central,,,['DSKMP3'],putative_primary,,['rich_club'; 'reciprocal'; 'feedforward_loop_participant'; '3_cycle_participant'],left,636,504
+720575940629163419,[],SLP.143,DA,intrinsic,central,,,['DSKMP3'],putative_primary,,['rich_club'; 'reciprocal'; 'feedforward_loop_participant'; '3_cycle_participant'],left,807,500
+720575940605030316,[],SLP.61,DA,intrinsic,central,,,['DSKMP3'],putative_primary,,['rich_club'; 'reciprocal'; 'feedforward_loop_participant'; '3_cycle_participant'],right,1377,585
+720575940628799509,[],SLP.85,,intrinsic,central,,,['DSKMP3'],putative_primary,,['rich_club'; 'reciprocal'; 'feedforward_loop_participant'; '3_cycle_participant'],right,1102,516
